@@ -6,7 +6,7 @@
 
 ## 在线玩
 
-https://gb3q110-source.github.io/snake/
+https://gb3q110.github.io/snake/
 
 ## 本地运行
 
