@@ -4,7 +4,11 @@
 
 **版本：** `snake.1.0.0`
 
-## 运行
+## 在线玩
+
+https://gb3q110-source.github.io/snake/
+
+## 本地运行
 
 双击或用浏览器打开 `index.html` 即可。
 
