@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>萌萌贪吃蛇</title>
-  <meta name="version" content="snake.1.0.0" />
+  <meta name="version" content="snake.1.1.0" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;800&display=swap" rel="stylesheet" />
@@ -321,7 +321,7 @@
     const actionBtn = document.getElementById("actionBtn");
     const diffBtns = document.querySelectorAll(".diff-btn");
 
-    const STATE = { MENU: "menu", PLAYING: "playing", PAUSED: "paused", OVER: "over" };
+    const STATE = { MENU: "menu", PLAYING: "playing", PAUSED: "paused", OVER: "over", EXPLODING: "exploding" };
 
     let state = STATE.MENU;
     let difficulty = localStorage.getItem("snake_difficulty") || "medium";
@@ -336,6 +336,13 @@
     let lastTick = 0;
     let animId = 0;
     let foodPulse = 0;
+    let tongueTimer = 0;
+    let tongueOut = false;
+
+    // 爆炸粒子系统
+    let particles = [];
+    let explosionTimer = 0;
+    const EXPLOSION_DURATION = 1500;
 
     const audio = { ctx: null };
 
@@ -367,9 +374,30 @@
       playTone(780, 0.08, "sine", 0.1, 0.05);
     }
 
+    // 增强的死亡爆炸音效
     function sfxDie() {
-      playTone(220, 0.12, "sawtooth", 0.1);
-      playTone(140, 0.2, "sawtooth", 0.08, 0.1);
+      // 第一声爆炸
+      playTone(180, 0.15, "sawtooth", 0.2);
+      playTone(120, 0.25, "sawtooth", 0.15, 0.05);
+      
+      // 第二声爆炸
+      playTone(100, 0.3, "square", 0.12, 0.1);
+      playTone(80, 0.35, "square", 0.1, 0.15);
+      
+      // 高频碎片音
+      playTone(400, 0.08, "triangle", 0.08, 0.05);
+      playTone(600, 0.06, "triangle", 0.06, 0.1);
+      playTone(300, 0.1, "triangle", 0.07, 0.15);
+      
+      // 低频震动
+      playTone(60, 0.4, "sine", 0.15, 0.1);
+      playTone(50, 0.5, "sine", 0.12, 0.2);
+      
+      // 随机碎片音效
+      for (let i = 0; i < 5; i++) {
+        const freq = 200 + Math.random() * 400;
+        playTone(freq, 0.05 + Math.random() * 0.1, "sine", 0.05, 0.1 + i * 0.05);
+      }
     }
 
     function sfxStart() {
@@ -467,6 +495,7 @@
       score = 0;
       moveInterval = cfg.initialSpeed;
       scoreEl.textContent = "0";
+      particles = [];
       randomFood();
     }
 
@@ -493,10 +522,122 @@
       animId = requestAnimationFrame(loop);
     }
 
+    // 创建爆炸粒子
+    function createExplosionParticles() {
+      particles = [];
+      snake.forEach((seg, i) => {
+        const cx = seg.x * CELL + CELL / 2;
+        const cy = seg.y * CELL + CELL / 2;
+        const isHead = i === snake.length - 1;
+        
+        // 每个蛇身节点产生多个粒子
+        const particleCount = isHead ? 20 : 12;
+        for (let j = 0; j < particleCount; j++) {
+          const angle = (Math.PI * 2 * j) / particleCount + Math.random() * 0.5;
+          const speed = 2 + Math.random() * 4;
+          const size = (isHead ? 8 : 5) + Math.random() * 4;
+          
+          // 渐变色：从绿色到黄色到红色
+          const progress = i / snake.length;
+          let r, g, b;
+          if (progress < 0.5) {
+            r = Math.floor(93 + (255 - 93) * progress * 2);
+            g = Math.floor(211 + (200 - 211) * progress * 2);
+            b = Math.floor(158 - 100 * progress * 2);
+          } else {
+            r = Math.floor(255 - 55 * (progress - 0.5) * 2);
+            g = Math.floor(200 - 100 * (progress - 0.5) * 2);
+            b = Math.floor(58 + 40 * (progress - 0.5) * 2);
+          }
+          
+          particles.push({
+            x: cx,
+            y: cy,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed - 2, // 初始向上偏移
+            size: size,
+            color: `rgb(${r}, ${g}, ${b})`,
+            alpha: 1,
+            gravity: 0.15 + Math.random() * 0.1,
+            rotation: Math.random() * Math.PI * 2,
+            rotationSpeed: (Math.random() - 0.5) * 0.3,
+            type: isHead && j < 5 ? 'star' : 'circle'
+          });
+        }
+      });
+    }
+
+    // 更新和绘制爆炸粒子
+    function updateAndDrawParticles(deltaTime) {
+      particles.forEach(p => {
+        // 更新位置
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += p.gravity; // 重力
+        p.vx *= 0.98; // 空气阻力
+        p.alpha -= deltaTime / EXPLOSION_DURATION;
+        p.rotation += p.rotationSpeed;
+      });
+      
+      // 移除消失的粒子
+      particles = particles.filter(p => p.alpha > 0);
+      
+      // 绘制粒子
+      particles.forEach(p => {
+        ctx.save();
+        ctx.globalAlpha = p.alpha;
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rotation);
+        
+        if (p.type === 'star') {
+          // 绘制星星形状
+          ctx.fillStyle = p.color;
+          ctx.beginPath();
+          for (let i = 0; i < 5; i++) {
+            const angle = (i * Math.PI * 2) / 5 - Math.PI / 2;
+            const innerAngle = angle + Math.PI / 5;
+            const outerR = p.size;
+            const innerR = p.size * 0.4;
+            if (i === 0) {
+              ctx.moveTo(Math.cos(angle) * outerR, Math.sin(angle) * outerR);
+            } else {
+              ctx.lineTo(Math.cos(angle) * outerR, Math.sin(angle) * outerR);
+            }
+            ctx.lineTo(Math.cos(innerAngle) * innerR, Math.sin(innerAngle) * innerR);
+          }
+          ctx.closePath();
+          ctx.fill();
+        } else {
+          // 绘制圆形粒子
+          ctx.fillStyle = p.color;
+          ctx.beginPath();
+          ctx.arc(0, 0, p.size * p.alpha, 0, Math.PI * 2);
+          ctx.fill();
+          
+          // 添加发光效果
+          const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, p.size * p.alpha * 2);
+          gradient.addColorStop(0, p.color);
+          gradient.addColorStop(1, 'transparent');
+          ctx.fillStyle = gradient;
+          ctx.globalAlpha = p.alpha * 0.3;
+          ctx.beginPath();
+          ctx.arc(0, 0, p.size * p.alpha * 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        
+        ctx.restore();
+      });
+    }
+
     function gameOver() {
-      state = STATE.OVER;
-      updateDiffButtons();
+      state = STATE.EXPLODING;
+      explosionTimer = 0;
       sfxDie();
+      createExplosionParticles();
+    }
+
+    function showGameOverUI() {
+      updateDiffButtons();
       const diffLabel = getDiffConfig().label;
       if (score > highScore) {
         highScore = score;
@@ -505,8 +646,9 @@
         sfxRecord();
         showOverlay("哇！新纪录！🎉", `【${diffLabel}】本局 ${score} 分，太厉害啦！`, "再来一局");
       } else {
-        showOverlay("哎呀撞到了！💫", `【${diffLabel}】本局 ${score} 分，再试一次吧～`, "再来一局");
+        showOverlay("哎呀撞到了！💥", `【${diffLabel}】本局 ${score} 分，再试一次吧～`, "再来一局");
       }
+      state = STATE.OVER;
     }
 
     function togglePause() {
@@ -561,9 +703,188 @@
       ctx.closePath();
     }
 
+    // 绘制改进的蛇
+    function drawSnake() {
+      const pad = Math.max(1, CELL * 0.1);
+      const corner = Math.max(1, CELL * 0.25);
+
+      // 绘制蛇身连接（先绘制连接部分）
+      ctx.strokeStyle = "#4ade80";
+      ctx.lineWidth = CELL * 0.6;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      
+      if (snake.length > 1) {
+        ctx.beginPath();
+        for (let i = 0; i < snake.length; i++) {
+          const seg = snake[i];
+          const cx = seg.x * CELL + CELL / 2;
+          const cy = seg.y * CELL + CELL / 2;
+          if (i === 0) {
+            ctx.moveTo(cx, cy);
+          } else {
+            ctx.lineTo(cx, cy);
+          }
+        }
+        ctx.stroke();
+      }
+
+      // 绘制每个蛇身节点
+      snake.forEach((seg, i) => {
+        const isHead = i === snake.length - 1;
+        const isTail = i === 0;
+        const progress = i / Math.max(1, snake.length - 1);
+        
+        const x = seg.x * CELL + pad;
+        const y = seg.y * CELL + pad;
+        const w = CELL - pad * 2;
+
+        // 渐变色蛇身
+        const gradient = ctx.createLinearGradient(x, y, x + w, y + w);
+        if (isHead) {
+          gradient.addColorStop(0, "#3cb878");
+          gradient.addColorStop(0.5, "#2dd4bf");
+          gradient.addColorStop(1, "#3cb878");
+        } else {
+          const hue = 140 + progress * 30; // 从绿色渐变到青绿色
+          gradient.addColorStop(0, `hsl(${hue}, 70%, 55%)`);
+          gradient.addColorStop(0.5, `hsl(${hue}, 75%, 60%)`);
+          gradient.addColorStop(1, `hsl(${hue}, 70%, 55%)`);
+        }
+
+        ctx.fillStyle = gradient;
+        
+        // 蛇身使用圆形，头部稍大
+        const size = isHead ? w * 1.1 : w;
+        const offset = isHead ? (w - size) / 2 : 0;
+        
+        ctx.beginPath();
+        ctx.arc(x + w/2, y + w/2, size/2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 添加高光效果
+        ctx.fillStyle = "rgba(255, 255, 255, 0.3)";
+        ctx.beginPath();
+        ctx.arc(x + w/2 - size*0.15, y + w/2 - size*0.15, size*0.25, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 蛇身花纹（斑点）
+        if (!isHead && !isTail && CELL >= 16) {
+          ctx.fillStyle = "rgba(255, 255, 255, 0.2)";
+          const spotSize = CELL * 0.12;
+          const spots = [
+            { dx: 0.3, dy: 0.3 },
+            { dx: 0.7, dy: 0.6 },
+          ];
+          spots.forEach(spot => {
+            ctx.beginPath();
+            ctx.arc(x + w * spot.dx, y + w * spot.dy, spotSize, 0, Math.PI * 2);
+            ctx.fill();
+          });
+        }
+
+        // 绘制蛇头特征
+        if (isHead && CELL >= 16) {
+          const centerX = x + w / 2;
+          const centerY = y + w / 2;
+          
+          // 眼睛
+          const eyeR = CELL * 0.14;
+          const pupilR = CELL * 0.07;
+          const eyeOffset = CELL * 0.18;
+          const nudge = CELL * 0.06;
+          
+          let eye1X = centerX - eyeOffset;
+          let eye2X = centerX + eyeOffset;
+          let eyeY = centerY - eyeOffset * 0.5;
+          
+          // 根据方向调整眼睛位置
+          eye1X += direction.x * nudge;
+          eye2X += direction.x * nudge;
+          eyeY += direction.y * nudge;
+
+          // 眼白
+          ctx.fillStyle = "#fff";
+          ctx.beginPath();
+          ctx.arc(eye1X, eyeY, eyeR, 0, Math.PI * 2);
+          ctx.arc(eye2X, eyeY, eyeR, 0, Math.PI * 2);
+          ctx.fill();
+          
+          // 眼珠
+          ctx.fillStyle = "#1a1a2e";
+          ctx.beginPath();
+          ctx.arc(eye1X + direction.x * nudge * 0.5, eyeY + direction.y * nudge * 0.5, pupilR, 0, Math.PI * 2);
+          ctx.arc(eye2X + direction.x * nudge * 0.5, eyeY + direction.y * nudge * 0.5, pupilR, 0, Math.PI * 2);
+          ctx.fill();
+          
+          // 眼睛高光
+          ctx.fillStyle = "#fff";
+          ctx.beginPath();
+          ctx.arc(eye1X - pupilR * 0.3, eyeY - pupilR * 0.3, pupilR * 0.4, 0, Math.PI * 2);
+          ctx.arc(eye2X - pupilR * 0.3, eyeY - pupilR * 0.3, pupilR * 0.4, 0, Math.PI * 2);
+          ctx.fill();
+
+          // 腮红
+          ctx.fillStyle = "rgba(255, 150, 180, 0.4)";
+          ctx.beginPath();
+          ctx.ellipse(centerX - size * 0.35, centerY + size * 0.15, CELL * 0.08, CELL * 0.05, 0, 0, Math.PI * 2);
+          ctx.ellipse(centerX + size * 0.35, centerY + size * 0.15, CELL * 0.08, CELL * 0.05, 0, 0, Math.PI * 2);
+          ctx.fill();
+
+          // 舌头动画
+          tongueTimer += 0.15;
+          if (Math.sin(tongueTimer) > 0.7) {
+            tongueOut = true;
+          } else {
+            tongueOut = false;
+          }
+          
+          if (tongueOut) {
+            const tongueLength = CELL * 0.4;
+            const tongueWidth = CELL * 0.06;
+            const tongueX = centerX + direction.x * size * 0.5;
+            const tongueY = centerY + direction.y * size * 0.5;
+            const endX = tongueX + direction.x * tongueLength;
+            const endY = tongueY + direction.y * tongueLength;
+            
+            // 舌头主体
+            ctx.strokeStyle = "#ff6b9d";
+            ctx.lineWidth = tongueWidth;
+            ctx.lineCap = "round";
+            ctx.beginPath();
+            ctx.moveTo(tongueX, tongueY);
+            ctx.lineTo(endX, endY);
+            ctx.stroke();
+            
+            // 舌头分叉
+            const forkLength = CELL * 0.15;
+            const forkAngle = 0.5;
+            ctx.lineWidth = tongueWidth * 0.7;
+            
+            ctx.beginPath();
+            ctx.moveTo(endX, endY);
+            ctx.lineTo(
+              endX + direction.x * forkLength + direction.y * forkLength * Math.sin(forkAngle),
+              endY + direction.y * forkLength - direction.x * forkLength * Math.sin(forkAngle)
+            );
+            ctx.stroke();
+            
+            ctx.beginPath();
+            ctx.moveTo(endX, endY);
+            ctx.lineTo(
+              endX + direction.x * forkLength - direction.y * forkLength * Math.sin(forkAngle),
+              endY + direction.y * forkLength + direction.x * forkLength * Math.sin(forkAngle)
+            );
+            ctx.stroke();
+          }
+        }
+      });
+    }
+
     function draw() {
       ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
+      // 绘制网格
       ctx.strokeStyle = "rgba(255, 182, 193, 0.35)";
       ctx.lineWidth = 1;
       for (let i = 0; i <= GRID; i++) {
@@ -577,16 +898,35 @@
         ctx.stroke();
       }
 
+      // 绘制食物
       foodPulse += 0.08;
       const pulse = 1 + Math.sin(foodPulse) * 0.08;
       const fx = food.x * CELL + CELL / 2;
       const fy = food.y * CELL + CELL / 2;
       const fr = Math.max(1, CELL / 2 - 0.5) * pulse;
 
+      // 食物发光效果
+      const foodGlow = ctx.createRadialGradient(fx, fy, 0, fx, fy, fr * 1.5);
+      foodGlow.addColorStop(0, "rgba(255, 159, 67, 0.3)");
+      foodGlow.addColorStop(1, "transparent");
+      ctx.fillStyle = foodGlow;
+      ctx.beginPath();
+      ctx.arc(fx, fy, fr * 1.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 食物主体
       ctx.fillStyle = "#ff9f43";
       ctx.beginPath();
       ctx.arc(fx, fy, fr, 0, Math.PI * 2);
       ctx.fill();
+      
+      // 食物高光
+      ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
+      ctx.beginPath();
+      ctx.arc(fx - fr * 0.3, fy - fr * 0.3, fr * 0.35, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // 叶子
       if (CELL >= 8) {
         ctx.fillStyle = "#5dd39e";
         ctx.beginPath();
@@ -594,46 +934,33 @@
         ctx.fill();
       }
 
-      const pad = Math.max(1, CELL * 0.15);
-      const corner = Math.max(1, CELL * 0.2);
-
-      snake.forEach((seg, i) => {
-        const isHead = i === snake.length - 1;
-        const x = seg.x * CELL + pad;
-        const y = seg.y * CELL + pad;
-        const w = CELL - pad * 2;
-
-        ctx.fillStyle = isHead ? "#3cb878" : "#5dd39e";
-        roundRect(x, y, w, w, corner);
-        ctx.fill();
-
-        if (isHead && CELL >= 8) {
-          const eyeR = CELL * 0.12;
-          const pupilR = CELL * 0.06;
-          const nudge = Math.max(1, CELL * 0.05);
-          let ex1 = x + w * 0.35, ey1 = y + w * 0.35;
-          let ex2 = x + w * 0.65, ey2 = y + w * 0.35;
-          ex1 += (direction.x || 0) * nudge;
-          ex2 += (direction.x || 0) * nudge;
-          ey1 += (direction.y || 0) * nudge;
-          ey2 += (direction.y || 0) * nudge;
-
-          ctx.fillStyle = "#fff";
-          ctx.beginPath();
-          ctx.arc(ex1, ey1, eyeR, 0, Math.PI * 2);
-          ctx.arc(ex2, ey2, eyeR, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = "#2d3436";
-          ctx.beginPath();
-          ctx.arc(ex1 + (direction.x || 0) * nudge, ey1 + (direction.y || 0) * nudge, pupilR, 0, Math.PI * 2);
-          ctx.arc(ex2 + (direction.x || 0) * nudge, ey2 + (direction.y || 0) * nudge, pupilR, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      });
+      // 绘制蛇（非爆炸状态）
+      if (state !== STATE.EXPLODING) {
+        drawSnake();
+      }
+      
+      // 绘制爆炸粒子
+      if (state === STATE.EXPLODING) {
+        updateAndDrawParticles(16);
+      }
     }
 
+    let lastFrameTime = 0;
     function loop(now) {
       animId = requestAnimationFrame(loop);
+      const deltaTime = now - lastFrameTime;
+      lastFrameTime = now;
+
+      // 处理爆炸动画
+      if (state === STATE.EXPLODING) {
+        explosionTimer += deltaTime;
+        draw();
+        if (explosionTimer >= EXPLOSION_DURATION) {
+          showGameOverUI();
+        }
+        return;
+      }
+
       draw();
 
       if (state !== STATE.PLAYING) return;
