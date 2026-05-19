@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>萌萌贪吃蛇</title>
-  <meta name="version" content="snake.1.1.0" />
+  <meta name="version" content="snake.1.1.1" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;800&display=swap" rel="stylesheet" />
@@ -369,9 +369,74 @@
       osc.stop(t + duration + 0.02);
     }
 
+    function playChomp(volume = 0.18, when = 0) {
+      if (!audio.ctx) return;
+      const ctx = audio.ctx;
+      const t0 = ctx.currentTime + when;
+      const out = ctx.createGain();
+      out.gain.setValueAtTime(1, t0);
+      out.connect(ctx.destination);
+
+      const thunkOsc = ctx.createOscillator();
+      const thunkGain = ctx.createGain();
+      thunkOsc.type = "sine";
+      thunkOsc.frequency.setValueAtTime(160, t0);
+      thunkOsc.frequency.exponentialRampToValueAtTime(85, t0 + 0.13);
+      thunkGain.gain.setValueAtTime(0.001, t0);
+      thunkGain.gain.exponentialRampToValueAtTime(volume * 0.95, t0 + 0.01);
+      thunkGain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.18);
+      thunkOsc.connect(thunkGain);
+      thunkGain.connect(out);
+      thunkOsc.start(t0);
+      thunkOsc.stop(t0 + 0.22);
+
+      const clickOsc = ctx.createOscillator();
+      const clickGain = ctx.createGain();
+      clickOsc.type = "square";
+      clickOsc.frequency.setValueAtTime(1200, t0);
+      clickGain.gain.setValueAtTime(0.001, t0);
+      clickGain.gain.exponentialRampToValueAtTime(volume * 0.22, t0 + 0.002);
+      clickGain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.03);
+      clickOsc.connect(clickGain);
+      clickGain.connect(out);
+      clickOsc.start(t0);
+      clickOsc.stop(t0 + 0.05);
+
+      const noiseLen = Math.max(1, Math.floor(ctx.sampleRate * 0.14));
+      const noiseBuf = ctx.createBuffer(1, noiseLen, ctx.sampleRate);
+      const data = noiseBuf.getChannelData(0);
+      for (let i = 0; i < noiseLen; i++) {
+        const e = 1 - i / noiseLen;
+        data[i] = (Math.random() * 2 - 1) * Math.pow(e, 0.35);
+      }
+
+      const noise = ctx.createBufferSource();
+      const band = ctx.createBiquadFilter();
+      const low = ctx.createBiquadFilter();
+      const noiseGain = ctx.createGain();
+      noise.buffer = noiseBuf;
+      band.type = "bandpass";
+      band.frequency.setValueAtTime(950, t0);
+      band.frequency.exponentialRampToValueAtTime(520, t0 + 0.12);
+      band.Q.setValueAtTime(0.9, t0);
+      low.type = "lowpass";
+      low.frequency.setValueAtTime(2200, t0);
+      low.frequency.exponentialRampToValueAtTime(1050, t0 + 0.14);
+      low.Q.setValueAtTime(0.7, t0);
+      noiseGain.gain.setValueAtTime(0.001, t0);
+      noiseGain.gain.exponentialRampToValueAtTime(volume * 0.72, t0 + 0.01);
+      noiseGain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.16);
+      noise.connect(band);
+      band.connect(low);
+      low.connect(noiseGain);
+      noiseGain.connect(out);
+      noise.start(t0);
+      noise.stop(t0 + 0.18);
+    }
+
     function sfxEat() {
-      playTone(520, 0.06, "sine", 0.12);
-      playTone(780, 0.08, "sine", 0.1, 0.05);
+      playChomp(0.18);
+      playTone(220, 0.07, "triangle", 0.06, 0.12);
     }
 
     // 增强的死亡爆炸音效
